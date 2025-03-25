@@ -40,7 +40,7 @@ public class PLObservable<T> {
     private var _value: T
     
     /// The observable value. Reading is thread-safe, writing triggers notifications by default.
-    public var value: T {
+    private(set) var value: T {
         get {
             // Thread-safe read access
             return syncQueue.sync { _value }
