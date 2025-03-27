@@ -57,6 +57,17 @@ public class PLObservable<T> {
         self._value = value
     }
     
+    /// Unsubscribes from all operator subscriptions when deallocating
+    deinit {
+        guard let subscriptions = objc_getAssociatedObject(self, &AssociatedKeys.operatorSubscriptions) as? [UUID] else {
+            return
+        }
+        
+        for subscriptionId in subscriptions {
+            unsubscribe(subscriptionId)
+        }
+    }
+    
     /// Specifies a custom dispatch queue for the next subscription
     /// - Parameter queue: The queue to deliver updates on
     /// - Returns: Self for chaining
@@ -286,4 +297,271 @@ public class PLObservable<T> {
             DispatchQueue.global().asyncAfter(deadline: .now() + interval, execute: workItem)
         }
     }
+}
+
+
+// MARK: - Transform Operations
+public extension PLObservable {
+    
+    /// Transforms the values emitted by an observable using a provided transformation function.
+    /// - Parameter transform: A closure that takes a value of type T and returns a value of type U.
+    /// - Returns: A new observable that emits transformed values.
+    func map<U>(_ transform: @escaping (T) -> U) -> PLObservable<U> {
+        // Create a new observable with the current transformed value
+        let result = PLObservable<U>(transform(self.value))
+        
+        // Subscribe to this observable to update the result observable
+        let subscription = self.subscribe { [weak result] newValue in
+            result?.setValue(transform(newValue))
+        }
+        
+        // Store the subscription ID in the result for proper cleanup
+        storeSubscriptionForOperator(id: subscription, in: result)
+        
+        return result
+    }
+    
+    /// Transforms values with an asynchronous operation, capturing the result when ready.
+    /// - Parameter transform: A closure that takes a value of type T and asynchronously returns a value of type U.
+    /// - Returns: A new observable that emits transformed values when the async operations complete.
+    func flatMap<U>(_ transform: @escaping (T) -> PLObservable<U>) -> PLObservable<U> {
+        // Create the result observable with the transformed value of the current value
+        let sourceTransformed = transform(self.value)
+        let result = PLObservable<U>(sourceTransformed.value)
+        
+        // 1. Subscribe to changes in this observable
+        let sourceSubscription = self.subscribe { [weak result, weak sourceTransformed] newValue in
+            // When source changes, we get the new transformed observable
+            guard let result = result else { return }
+            let newTransformed = transform(newValue)
+            
+            // Update internal state
+            withExtendedLifetime(sourceTransformed) { _ in
+                // Ensure previous sourceTransformed remains alive until here
+            }
+            
+            // Set initial value and subscribe to the new transformed observable
+            result.setValue(newTransformed.value)
+            
+            // We could track and manage these subscriptions, but for simplicity
+            // we're letting them be reclaimed when newTransformed is deallocated
+            _ = newTransformed.subscribe { [weak result] transformedValue in
+                result?.setValue(transformedValue)
+            }
+        }
+        
+        // 2. Also subscribe to the initial transformed observable
+        let initialTransformSubscription = sourceTransformed.subscribe { [weak result] transformedValue in
+            result?.setValue(transformedValue)
+        }
+        
+        // Store the subscription IDs for proper cleanup
+        storeSubscriptionForOperator(id: sourceSubscription, in: result)
+        storeSubscriptionForOperator(id: initialTransformSubscription, in: result)
+        
+        return result
+    }
+    
+    /// Unwraps optional values from an observable, only emitting non-nil values.
+    /// - Returns: A new observable that emits non-nil values.
+    func compactMap<U>() -> PLObservable<U> where T == U? {
+        // Create a new observable with the unwrapped value, if available
+        let initialValue: U
+        if let unwrapped = self.value {
+            initialValue = unwrapped
+        } else {
+            // This is a bit of a hack - we need a valid initial value
+            // This will throw if there's never a non-nil value
+            fatalError("Cannot create compactMap observable from a nil initial value")
+        }
+        
+        let result = PLObservable<U>(initialValue)
+        
+        // Subscribe to this observable to update the result observable
+        let subscription = self.subscribe { [weak result] newValue in
+            if let unwrapped = newValue {
+                result?.setValue(unwrapped)
+            }
+        }
+        
+        storeSubscriptionForOperator(id: subscription, in: result)
+        
+        return result
+    }
+}
+
+// MARK: - Filter Operations
+public extension PLObservable {
+    
+    /// Creates a new observable that only emits values that satisfy the given predicate.
+    /// - Parameter isIncluded: A closure that takes a value of type T and returns a Boolean indicating whether to include the value.
+    /// - Returns: A new observable that only emits values that satisfy the predicate.
+    func filter(_ isIncluded: @escaping (T) -> Bool) -> PLObservable<T> {
+        
+        let result = PLObservable<T>(self.value)
+        
+        // Subscribe to this observable to conditionally update the result observable
+        let subscription = self.subscribe { [weak result] newValue in
+            if isIncluded(newValue) {
+                result?.setValue(newValue)
+            }
+        }
+        
+        storeSubscriptionForOperator(id: subscription, in: result)
+        
+        return result
+    }
+    
+    /// Creates a new observable that skips the first n emissions.
+    /// - Parameter count: The number of emissions to skip.
+    /// - Returns: A new observable that skips the first n emissions.
+    func skip(_ count: Int) -> PLObservable<T> {
+        let result = PLObservable<T>(self.value)
+        
+        var skipped = 0
+        let subscription = self.subscribe { [weak result] newValue in
+            if skipped >= count {
+                result?.setValue(newValue)
+            } else {
+                skipped += 1
+            }
+        }
+        
+        storeSubscriptionForOperator(id: subscription, in: result)
+        
+        return result
+    }
+    
+    /// Creates a new observable that only emits values that are distinct from the previous value.
+    /// - Parameter areEqual: A closure that takes two values of type T and returns a Boolean indicating whether they are equal.
+    /// - Returns: A new observable that only emits values that are distinct from the previous value.
+    func distinctUntilChanged(by areEqual: @escaping (T, T) -> Bool) -> PLObservable<T> {
+        let result = PLObservable<T>(self.value)
+        
+        var lastValue = self.value
+        let subscription = self.subscribe { [weak result] newValue in
+            if !areEqual(lastValue, newValue) {
+                lastValue = newValue
+                result?.setValue(newValue)
+            }
+        }
+        
+        storeSubscriptionForOperator(id: subscription, in: result)
+        
+        return result
+    }
+    
+    /// Creates a new observable that only emits values that are distinct from the previous value.
+    /// This version uses Equatable for the comparison.
+    /// - Returns: A new observable that only emits values that are distinct from the previous value.
+    func distinctUntilChanged() -> PLObservable<T> where T: Equatable {
+        distinctUntilChanged(by: ==)
+    }
+}
+
+// MARK: - Combine Operations
+public extension PLObservable {
+    
+    /// Merges this observable with another observable of the same type.
+    /// The resulting observable emits a value whenever either source observable emits a value.
+    /// - Parameter other: Another observable of the same type to merge with this one.
+    /// - Returns: A new observable that emits values from both source observables.
+    func merge(_ other: PLObservable<T>) -> PLObservable<T> {
+        let result = PLObservable<T>(self.value)
+        
+        let subscription1 = self.subscribe { [weak result] newValue in
+            result?.setValue(newValue)
+        }
+        
+        let subscription2 = other.subscribe { [weak result] newValue in
+            result?.setValue(newValue)
+        }
+        
+        storeSubscriptionForOperator(id: subscription1, in: result)
+        storeSubscriptionForOperator(id: subscription2, in: result)
+        
+        return result
+    }
+    
+    /// Zips values from two observables, emitting pairs of values when both observables have produced a new value.
+    /// - Parameter other: Another observable to zip with this one.
+    /// - Returns: A new observable that emits pairs of values.
+    func zip<U>(_ other: PLObservable<U>) -> PLObservable<(T, U)> {
+        let result = PLObservable<(T, U)>((self.value, other.value))
+        
+        // These queues store values waiting to be paired
+        var selfQueue: [T] = []
+        var otherQueue: [U] = []
+        
+        // A queue to synchronize access
+        let syncQueue = DispatchQueue(label: "com.pledge.zip.sync")
+        
+        let processQueues = { [weak result] in
+            // If we have at least one value in each queue, emit a pair
+            if !selfQueue.isEmpty && !otherQueue.isEmpty {
+                let selfValue = selfQueue.removeFirst()
+                let otherValue = otherQueue.removeFirst()
+                result?.setValue((selfValue, otherValue))
+            }
+        }
+        
+        let subscription1 = self.subscribe { [weak result] newValue in
+            syncQueue.sync {
+                selfQueue.append(newValue)
+                processQueues()
+            }
+        }
+        
+        let subscription2 = other.subscribe { [weak result] newValue in
+            syncQueue.sync {
+                otherQueue.append(newValue)
+                processQueues()
+            }
+        }
+        
+        storeSubscriptionForOperator(id: subscription1, in: result)
+        storeSubscriptionForOperator(id: subscription2, in: result)
+        
+        return result
+    }
+}
+
+// MARK: - Subscription Management
+private extension PLObservable {
+    /// Stores the subscription ID in the associated object for proper cleanup
+    /// - Parameters:
+    ///   - id: The subscription ID to store
+    ///   - observable: The observable to associate the subscription with
+    func storeSubscriptionForOperator<U>(id: UUID, in observable: PLObservable<U>?) {
+        guard let observable = observable else { return }
+        
+        // Use associated objects to store subscription IDs
+        let subscriptions = getOperatorSubscriptions(from: observable) ?? []
+        setOperatorSubscriptions(subscriptions + [id], for: observable)
+    }
+    
+    /// Gets the operator subscriptions from an observable
+    /// - Parameter observable: The observable to get subscriptions from
+    /// - Returns: An array of subscription IDs
+    func getOperatorSubscriptions<U>(from observable: PLObservable<U>) -> [UUID]? {
+        objc_getAssociatedObject(observable, &AssociatedKeys.operatorSubscriptions) as? [UUID]
+    }
+    
+    /// Sets the operator subscriptions for an observable
+    /// - Parameters:
+    ///   - subscriptions: The subscription IDs to store
+    ///   - observable: The observable to associate the subscriptions with
+    func setOperatorSubscriptions<U>(_ subscriptions: [UUID], for observable: PLObservable<U>) {
+        objc_setAssociatedObject(
+            observable,
+            &AssociatedKeys.operatorSubscriptions,
+            subscriptions,
+            .OBJC_ASSOCIATION_RETAIN_NONATOMIC
+        )
+    }
+}
+
+// Keys for associated objects
+private struct AssociatedKeys {
+    static var operatorSubscriptions: UInt8 = 0
 }
