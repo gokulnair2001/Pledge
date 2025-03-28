@@ -505,14 +505,14 @@ public extension PLObservable {
             }
         }
         
-        let subscription1 = self.subscribe { [weak result] newValue in
+        let subscription1 = self.subscribe { newValue in
             syncQueue.sync {
                 selfQueue.append(newValue)
                 processQueues()
             }
         }
         
-        let subscription2 = other.subscribe { [weak result] newValue in
+        let subscription2 = other.subscribe { newValue in
             syncQueue.sync {
                 otherQueue.append(newValue)
                 processQueues()
@@ -560,6 +560,67 @@ private extension PLObservable {
         )
     }
 }
+
+public extension PLObservable where T == Result<Any, Error> {
+    
+    /// Maps the success value of the observable to a new value of type U.
+    /// - Parameter transform: A closure that transforms the success value.
+    /// - Returns: A new observable with the transformed success value.
+    func mapSuccess<U>(_ transform: @escaping (Any) -> U) -> PLObservable<Result<U, Error>> {
+        return self.map { result in
+            switch result {
+            case .success(let value):
+                return .success(transform(value))
+            case .failure(let error):
+                return .failure(error)
+            }
+        }
+    }
+    
+    /// Maps the error value of the observable to a new error of type E.
+    /// - Parameter transform: A closure that transforms the error value.
+    /// - Returns: A new observable with the transformed error value.
+    func mapError<E>(_ transform: @escaping (Error) -> E) -> PLObservable<Result<Any, E>> {
+        return self.map { result in
+            switch result {
+            case .success(let value):
+                return .success(value)
+            case .failure(let error):
+                return .failure(transform(error))
+            }
+        }
+    }
+    
+    /// Flat maps the success value of the observable to a new observable.
+    /// - Parameter transform: A closure that transforms the success value into a new observable.
+    /// - Returns: A new observable that is the result of flat mapping the success value.
+    func flatMapSuccess<U>(_ transform: @escaping (Any) -> PLObservable<Result<U, Error>>) -> PLObservable<Result<U, Error>> {
+        return self.flatMap { result -> PLObservable<Result<U, Error>> in
+            switch result {
+            case .success(let value):
+                return transform(value)
+            case .failure(let error):
+                return PLObservable<Result<U, Error>>(.failure(error))
+            }
+        }
+    }
+    
+    /// Creates a new observable with a success value of type U.
+    /// - Parameter value: The value to be wrapped in a success result.
+    /// - Returns: A new observable with the given success value.
+    static func success<U, E: Error>(_ value: U) -> PLObservable<Result<U, E>> {
+        return PLObservable<Result<U, E>>(.success(value))
+    }
+    
+    /// Creates a new observable with a failure value of type E.
+    /// - Parameter error: The error to be wrapped in a failure result.
+    /// - Returns: A new observable with the given failure value.
+    static func failure<U, E: Error>(_ error: E) -> PLObservable<Result<U, E>> {
+        return PLObservable<Result<U, E>>(.failure(error))
+    }
+    
+}
+
 
 // Keys for associated objects
 private struct AssociatedKeys {
