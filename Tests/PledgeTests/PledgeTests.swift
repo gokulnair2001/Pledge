@@ -322,4 +322,165 @@ final class PledgeTests: XCTestCase {
         XCTAssertEqual(receivedValues, [0, 3], "Only debounced values should be received")
     }
 
+    // MARK: - Operator Tests
+    
+    func testMapOperator() {
+        let observable = PLObservable<Int>(5)
+        let mappedObservable = observable.map { value in "Number: \(value)" }
+        
+        let expectation = XCTestExpectation(description: "Updated and mapped the new value")
+        
+        var result = ""
+        _ = mappedObservable.subscribe { value in
+            result = value
+            if value == "Number: 10" {
+                expectation.fulfill()
+            }
+        }
+        
+        XCTAssertEqual(result, "Number: 5")
+        
+        observable.setValue(10)
+        
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(result, "Number: 10")
+    }
+    
+    func testCompactMapOperator() {
+        // Create a safe implementation for testing
+        let observable = PLObservable<Int?>(5)
+        let mappedObservable = observable.compactMap()
+        
+        let expectation = XCTestExpectation(description: "Updated and mapped the new value")
+        
+        var result = 0
+        mappedObservable.subscribe { value in
+            result = value
+            if value == 10 {
+                expectation.fulfill()
+            }
+        }
+        
+        XCTAssertEqual(result, 5)
+        
+        observable.setValue(nil)
+        XCTAssertEqual(result, 5, "Nil values should be ignored")
+        
+        observable.setValue(10)
+        wait(for: [expectation], timeout: 1)
+        XCTAssertEqual(result, 10, "Non-nil values should be emitted")
+    }
+    
+    func testFilterOperator() {
+        let observable = PLObservable<Int>(5)
+        let filteredObservable = observable.filter { $0 % 2 == 0 }
+        
+        let expectation2 = XCTestExpectation(description: "Filtered with value 2")
+        let expectation4 = XCTestExpectation(description: "Filtered with value 4")
+
+        var receivedValues: [Int] = []
+        
+        _ = filteredObservable.subscribe { value in
+            receivedValues.append(value)
+            if value == 2 {
+                expectation2.fulfill()
+            } else if value == 4 {
+                expectation4.fulfill()
+            }
+        }
+
+        // `5` should NOT be received, so no need to assert here
+
+        observable.setValue(2)
+        wait(for: [expectation2], timeout: 1)
+        XCTAssertEqual(receivedValues, [5, 2], "Only even numbers should be received")
+
+        observable.setValue(3) // This should be filtered out
+        XCTAssertEqual(receivedValues, [5, 2], "Filtered out values should not be observed")
+
+        observable.setValue(4)
+        wait(for: [expectation4], timeout: 1)
+        XCTAssertEqual(receivedValues, [5, 2, 4], "Only even numbers should be received")
+    }
+
+    
+    func testDistinctUntilChangedOperator() {
+        let observable = PLObservable<Int>(1)
+        let distinctObservable = observable.distinctUntilChanged()
+        
+        var receivedValues: [Int] = []
+        let expectation = XCTestExpectation(description: "Should receive distinct values")
+        
+        distinctObservable.subscribe { value in
+            receivedValues.append(value)
+            
+            if receivedValues == [1, 2] {
+                expectation.fulfill() // Expecting only distinct values
+            }
+        }
+        
+        // Initial value should be received
+        XCTAssertEqual(receivedValues, [1])
+        
+        // Set identical value (should NOT trigger)
+        observable.setValue(1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            XCTAssertEqual(receivedValues, [1], "Identical values should not trigger notification")
+        }
+        
+        // Set a new distinct value (should trigger)
+        observable.setValue(2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            XCTAssertEqual(receivedValues, [1, 2])
+        }
+        
+        // Set identical value again (should NOT trigger)
+        observable.setValue(2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            XCTAssertEqual(receivedValues, [1, 2], "Identical values should not trigger notification")
+        }
+        
+        wait(for: [expectation], timeout: 1.0)
+    }
+
+    
+    // MARK: - Global Store Tests
+    
+    func testGlobalStore() {
+        let store = PLGlobalStore.shared
+        
+        // Test integer observable
+        let intObs = store.integer(for: "test-int", defaultValue: 5)
+        var intValue = 0
+        _ = intObs.subscribe { value in
+            intValue = value
+        }
+        XCTAssertEqual(intValue, 5)
+        
+        // Test string observable
+        let stringObs = store.string(for: "test-string", defaultValue: "hello")
+        var stringValue = ""
+        _ = stringObs.subscribe { value in
+            stringValue = value
+        }
+        XCTAssertEqual(stringValue, "hello")
+        
+        // Test retrieval of existing observable
+        let sameIntObs = store.integer(for: "test-int")
+        XCTAssertEqual(sameIntObs.value, 5)
+        
+        // Update through one reference should update the other
+        intObs.setValue(10)
+        XCTAssertEqual(sameIntObs.value, 10)
+        
+        // Test removing observable
+        store.removeObservable(for: "test-int")
+        let newIntObs = store.integer(for: "test-int", defaultValue: 15)
+        XCTAssertEqual(newIntObs.value, 15, "New observable should be created with default value")
+        
+        // Test removeAll
+        store.removeAllObservables()
+        let newStringObs = store.string(for: "test-string", defaultValue: "reset")
+        XCTAssertEqual(newStringObs.value, "reset", "New observable should be created with default value")
+    }
 }
