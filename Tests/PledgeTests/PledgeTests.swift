@@ -10,6 +10,21 @@ import XCTest
 
 final class PledgeTests: XCTestCase {
     
+    func testDefaultValueSubscription() {
+        
+        let observable = PLObservable<Int>(0)
+        var receivedValues: [Int] = []
+        let expectation = XCTestExpectation(description: "Default value subscribed")
+        
+        _ = observable.throttle(for: 0.1).subscribe { value in
+            receivedValues.append(value)
+            expectation.fulfill()
+        }
+        
+        wait(for: [expectation], timeout: 1.0)
+        
+        XCTAssertEqual(receivedValues, [0], "Default value must be subscribed automatically")
+    }
     
     // MARK: - Basic Observable Tests
     func testBasicObservableSubscription() {
@@ -204,5 +219,107 @@ final class PledgeTests: XCTestCase {
         wait(for: [expectation], timeout: 1.0)
     }
     
-   
+    func testObserverPriority() {
+        let observable = PLObservable<Int>(0)
+        var order: [String] = []
+        
+        let expectation1 = XCTestExpectation(description: "Low priority observable triggered")
+        let expectation2 = XCTestExpectation(description: "Normal priority observable triggered")
+        let expectation3 = XCTestExpectation(description: "High priority observable triggered")
+        
+        _ = observable.withPriority(.low).subscribe { _ in
+            order.append("low")
+            expectation1.fulfill()
+        }
+        
+        _ = observable.withPriority(.normal).subscribe { _ in
+            order.append("normal")
+            expectation2.fulfill()
+        }
+        
+        _ = observable.withPriority(.high).subscribe { _ in
+            order.append("high")
+            expectation3.fulfill()
+        }
+        
+        // Clear initial notifications
+        order.removeAll()
+        
+        // Trigger notifications
+        observable.setValue(1)
+        
+        wait(for: [expectation1, expectation2, expectation3], timeout: 1)
+        // Priorities should be respected in notification order
+        XCTAssertEqual(order, ["high", "normal", "low"], "Notifications should occur in priority order")
+    }
+    
+    // MARK: - Rate Limiting Tests
+    func testThrottle() {
+        let observable = PLObservable<Int>(0)
+        var receivedValues: [Int] = []
+        let expectation = XCTestExpectation(description: "Throttled values")
+        
+        _ = observable.throttle(for: 1).subscribe { value in
+            receivedValues.append(value)
+            print("recev: \(receivedValues)")
+            // Ensure we get at least 3 valid emissions (O - Default, 1-Set value, 4 - Set after throttle
+            if receivedValues.count >= 3 {
+                expectation.fulfill()
+            }
+        }
+        
+        // Initial value (should be received immediately)
+        observable.setValue(1)
+        
+        // Delay updates to ensure they fall within the throttle window
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            observable.setValue(2)  // This should be throttled
+        }
+        
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            observable.setValue(3)  // This should also be throttled
+        }
+        
+        // This value comes after 200ms, should be received
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            observable.setValue(4)
+        }
+        
+        wait(for: [expectation], timeout: 3.0)
+        
+        // Ensuring that only allowed values are received
+        XCTAssertEqual(receivedValues, [0, 1, 4], "Only non-throttled values should be received")
+    }
+
+    func testDebounce() {
+        let observable = PLObservable<Int>(0)
+        var receivedValues: [Int] = []
+        let expectation = XCTestExpectation(description: "Debounced values")
+        
+        _ = observable.debounce(for: 0.1).subscribe { value in
+            receivedValues.append(value)
+            if value == 3 {
+                expectation.fulfill()
+            }
+        }
+        
+        // Initial notification (this should always happen)
+        XCTAssertEqual(receivedValues, [0])
+        
+        // Rapid sequence of updates within debounce window
+        observable.setValue(1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            observable.setValue(2)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) {
+            observable.setValue(3)
+        }
+        
+        // Wait longer than debounce period to allow last value to be emitted
+        wait(for: [expectation], timeout: 0.3)
+        
+        // Expected: Only [0, 3] (if debounce is working correctly)
+        XCTAssertEqual(receivedValues, [0, 3], "Only debounced values should be received")
+    }
+
 }
