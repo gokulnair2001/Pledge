@@ -174,4 +174,35 @@ final class PledgeTests: XCTestCase {
         XCTAssertEqual(notificationCount, 2, "Only one notification should occur after batch updates")
     }
     
+    // MARK: - Queue and Priority Tests
+    func testDeliveryQueue() {
+        let observable = PLObservable<Int>(0)
+        let expectation = XCTestExpectation(description: "Delivery on specific queue")
+        
+        let customQueue = DispatchQueue(label: "com.test.customQueue")
+        let key = DispatchSpecificKey<String>()
+        customQueue.setSpecific(key: key, value: "customQueue")
+        
+        _ = observable.deliver(on: customQueue).subscribe { _ in
+            let value = DispatchQueue.getSpecific(key: key)
+            XCTAssertEqual(value, "customQueue", "Handler should be called on the custom queue")
+            expectation.fulfill()
+        }
+        
+        wait(for: [expectation], timeout: 1.0)
+    }
+    
+    func testMainQueueDelivery() {
+        let observable = PLObservable<Int>(0)
+        let expectation = XCTestExpectation(description: "Delivery on main queue")
+        
+        _ = observable.deliverOnMain().subscribe { _ in
+            XCTAssertTrue(Thread.isMainThread, "Handler should be called on the main thread")
+            expectation.fulfill()
+        }
+        
+        wait(for: [expectation], timeout: 1.0)
+    }
+    
+   
 }
