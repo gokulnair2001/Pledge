@@ -114,4 +114,64 @@ final class PledgeTests: XCTestCase {
         XCTAssertEqual(count2, 2, "Subscribed observer should continue receiving updates")
     }
 
+    func testRemoveAllSubscribers() {
+        let observable = PLObservable<Int>(0)
+        var count = 0
+        
+        _ = observable.subscribe { _ in count += 1 }
+        _ = observable.subscribe { _ in count += 1 }
+        
+        // Both subscribers notified of initial value
+        XCTAssertEqual(count, 2)
+        
+        observable.removeAllSubscribers()
+        
+        // Update value
+        observable.setValue(1)
+        
+        // Count should not increase
+        XCTAssertEqual(count, 2, "No subscribers should be notified after removeAllSubscribers")
+    }
+    
+    // MARK: - Batch Updates Tests
+    
+    func testBatchUpdates() {
+        let observable = PLObservable<Int>(0)
+        var notificationCount = 0
+        
+        let expectation1 = XCTestExpectation(description: "Initial Observer triggered")
+        let expectation2 = XCTestExpectation(description: "Observer triggered after batch update")
+        
+        _ = observable.subscribe { value in
+            notificationCount += 1
+            if value == 0 {
+                expectation1.fulfill()
+            } else if value == 3 {
+                expectation2.fulfill()
+            }
+        }
+        
+        wait(for: [expectation1], timeout: 1)
+        // Initial notification
+        XCTAssertEqual(notificationCount, 1)
+        
+        // Begin batch updates
+        observable.beginUpdates()
+        
+        // Multiple updates during batch
+        observable.setValue(1)
+        observable.setValue(2)
+        observable.setValue(3)
+        
+        // No additional notifications should have occurred
+        XCTAssertEqual(notificationCount, 1, "No notifications should occur during batch updates")
+        
+        // End batch updates
+        observable.endUpdates()
+        
+        wait(for: [expectation2], timeout: 1)
+        // Should receive just one more notification
+        XCTAssertEqual(notificationCount, 2, "Only one notification should occur after batch updates")
+    }
+    
 }
