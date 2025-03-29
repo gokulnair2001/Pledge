@@ -20,6 +20,7 @@ public final class PLGlobalStore {
     private var observables: [String: Any] = [:]
     
     /// Thread-safe access to observables
+    /// Uses a concurrent queue with barrier flags for write operations
     private let syncQueue = DispatchQueue(label: "com.pledge.globalstore", attributes: .concurrent)
     
     /// Creates or retrieves an observable for a given key
@@ -27,12 +28,15 @@ public final class PLGlobalStore {
     ///   - key: The unique identifier for the observable
     ///   - defaultValue: The initial value if the observable doesn't exist
     /// - Returns: A PLObservable instance for the given key
+    /// - Note: Thread-safe implementation using barrier flags for write operations
     public func observable<T>(for key: String, defaultValue: T) -> PLObservable<T> {
         return syncQueue.sync(flags: .barrier) {
+            // Return existing observable if one exists for this key and type
             if let existing = observables[key] as? PLObservable<T> {
                 return existing
             }
             
+            // Create a new observable with the default value if none exists
             let observable = PLObservable(defaultValue)
             observables[key] = observable
             return observable
@@ -41,6 +45,7 @@ public final class PLGlobalStore {
     
     /// Removes an observable from the store
     /// - Parameter key: The key of the observable to remove
+    /// - Note: Uses weak self to prevent retain cycles
     public func removeObservable(for key: String) {
         syncQueue.sync(flags: .barrier) { [weak self] () -> Void in
             self?.observables.removeValue(forKey: key)
@@ -48,6 +53,7 @@ public final class PLGlobalStore {
     }
     
     /// Removes all observables from the store
+    /// - Note: Use with caution as this clears all observables
     public func removeAllObservables() {
         syncQueue.sync(flags: .barrier) { [weak self] () -> Void in
             self?.observables.removeAll()
