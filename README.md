@@ -23,7 +23,7 @@ Add the following to your `Package.swift` file:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/username/Pledge.git", from: "1.0.0")
+    .package(url: "https://github.com/gokulnair2001/Pledge.git", from: "1.0.0")
 ]
 ```
 
