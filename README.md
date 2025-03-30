@@ -74,7 +74,7 @@ The diagram above illustrates the flow of data in Pledge:
 
 1. An observable holds a value and maintains a list of subscribers
 2. When the value changes, all subscribers are notified in priority order
-3. Subscribers can specify delivery queues for thread-safety
+3. Subscribers can perform transformers and specify delivery queues for thread-safety
 4. Optional rate limiting can control notification frequency
 
 ## API Reference
