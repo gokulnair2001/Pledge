@@ -1,5 +1,5 @@
 # Pledge 
-A thoughtfully designed reactive programming framework .
+A thoughtfully designed reactive programming framework.
 
 Pledge is a lightweight, thread-safe reactive programming framework for Swift that simplifies state management, event propagation and balances power with simplicity in your applications. While other frameworks force you to learn complex concepts and operators, Pledge focuses on solving the real problems developers face daily:
 
