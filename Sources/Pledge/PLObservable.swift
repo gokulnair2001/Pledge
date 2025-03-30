@@ -40,6 +40,7 @@ public class PLObservable<T> {
     private var _value: T
     
     /// The observable value. Reading is thread-safe, writing triggers notifications by default.
+    /// Consider making this public to allow direct access to the value property
     private(set) var value: T {
         get {
             // Thread-safe read access
@@ -58,6 +59,7 @@ public class PLObservable<T> {
     }
     
     /// Unsubscribes from all operator subscriptions when deallocating
+    /// This prevents memory leaks by cleaning up subscriptions created by operators
     deinit {
         guard let subscriptions = objc_getAssociatedObject(self, &AssociatedKeys.operatorSubscriptions) as? [UUID] else {
             return
@@ -80,6 +82,7 @@ public class PLObservable<T> {
     }
     
     /// Specifies that the next subscription should receive updates on the main queue
+    /// Convenience method for UI updates that must happen on the main thread
     /// - Returns: Self for chaining
     @discardableResult
     public func deliverOnMain() -> Self {
@@ -87,6 +90,7 @@ public class PLObservable<T> {
     }
     
     /// Sets the priority for the next subscription
+    /// Higher priority subscribers receive notifications before lower priority ones
     /// - Parameter priority: The priority level for the next subscription
     /// - Returns: Self for chaining
     @discardableResult
@@ -100,6 +104,7 @@ public class PLObservable<T> {
     /// Subscribes to value changes
     /// - Parameter observer: Closure to call with the current value and when changes occur
     /// - Returns: A token that can be used to unsubscribe later
+    /// - Note: The observer is immediately called with the current value upon subscription
     @discardableResult
     public func subscribe(_ observer: @escaping (T) -> Void) -> UUID {
         return syncQueue.sync {
@@ -130,6 +135,7 @@ public class PLObservable<T> {
     }
     
     /// Notifies all registered observers with the current value
+    /// Useful for manually triggering updates without changing the value
     public func notifyObservers() {
         let currentValue = syncQueue.sync { _value }
         notifySubscribersWithValue(currentValue)
@@ -137,6 +143,7 @@ public class PLObservable<T> {
     
     /// Removes a subscriber
     /// - Parameter id: The UUID returned from the subscribe method
+    /// - Note: Safe to call even if the ID doesn't exist
     public func unsubscribe(_ id: UUID) {
         syncQueue.sync(flags: .barrier) {
             if let index = subscribers.firstIndex(where: { $0.id == id }) {
@@ -148,6 +155,7 @@ public class PLObservable<T> {
     }
     
     /// Removes all subscribers
+    /// Use when you need to clean up all subscriptions at once
     public func removeAllSubscribers() {
         syncQueue.sync(flags: .barrier) {
             // Cancel pending notifications for all subscribers
@@ -162,6 +170,7 @@ public class PLObservable<T> {
     /// - Parameters:
     ///   - newValue: The new value to set
     ///   - notify: Whether to notify subscribers about this change
+    /// - Note: This is the core method for updating the observable's value
     public func setValue(_ newValue: T, notify: Bool = true) {
         syncQueue.sync(flags: .barrier) {
             // Update notification preference
@@ -189,6 +198,7 @@ public class PLObservable<T> {
     }
     
     /// Begins a batch update session, temporarily suspending notifications
+    /// Use for making multiple updates efficiently without triggering intermediate notifications
     public func beginUpdates() {
         syncQueue.sync(flags: .barrier) {
             isBatchUpdating = true
@@ -197,6 +207,7 @@ public class PLObservable<T> {
     }
     
     /// Ends a batch update session and sends a single notification if changes occurred
+    /// Should be called after beginUpdates() to resume normal notification behavior
     public func endUpdates() {
         syncQueue.sync(flags: .barrier) {
             isBatchUpdating = false
@@ -214,6 +225,7 @@ public class PLObservable<T> {
     
     /// Notifies all subscribers with a specific value
     /// - Parameter valueToNotify: The value to send to subscribers
+    /// - Note: Subscribers are notified in priority order
     private func notifySubscribersWithValue(_ valueToNotify: T) {
         syncQueue.sync {
             // Sort subscribers by priority and create a copy to avoid race conditions
@@ -231,6 +243,7 @@ public class PLObservable<T> {
     ///
     /// - Parameter interval: The minimum time interval between notifications
     /// - Returns: Self for chaining
+    /// - Note: Affects only the next subscription
     @discardableResult
     public func throttle(for interval: TimeInterval) -> Self {
         syncQueue.sync(flags: .barrier) {
@@ -244,6 +257,7 @@ public class PLObservable<T> {
     ///
     /// - Parameter interval: The time to wait after the last update before notifying
     /// - Returns: Self for chaining
+    /// - Note: Affects only the next subscription
     @discardableResult
     public func debounce(for interval: TimeInterval) -> Self {
         syncQueue.sync(flags: .barrier) {
@@ -253,6 +267,10 @@ public class PLObservable<T> {
     }
     
     /// Wrapper method for value changes that handles debouncing and throttling logic
+    /// - Parameters:
+    ///   - subscription: The subscription to notify
+    ///   - value: The value to notify the subscription with
+    /// - Note: This should probably be private, not internal
     internal func handleRateLimitedNotification(for subscription: PLSubscription<T>, with value: T) {
         switch subscription.rateLimitingType {
         case .none:
@@ -623,6 +641,7 @@ public extension PLObservable where T == Result<Any, Error> {
 
 
 // Keys for associated objects
+/// Storage for associated object keys - consider making these private
 private struct AssociatedKeys {
     static var operatorSubscriptions: UInt8 = 0
 }
