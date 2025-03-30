@@ -68,7 +68,7 @@ PLGlobalStore.shared.string(for: "userName").setValue("John")
 
 ## How Observables Work
 
-![Observable Pattern Diagram](https://link-to-your-diagram.png)
+![HOW](https://github.com/user-attachments/assets/c395d778-3c09-4219-a03a-fa98753b33ca)
 
 The diagram above illustrates the flow of data in Pledge:
 
